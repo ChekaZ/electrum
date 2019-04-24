@@ -11,6 +11,7 @@ import subprocess
 
 from setuptools import setup, find_packages
 from setuptools.command.install import install
+from distutils import core
 
 MIN_PYTHON_VERSION = "3.6.1"
 _min_python_version_tuple = tuple(map(int, (MIN_PYTHON_VERSION.split("."))))
@@ -57,11 +58,17 @@ extras_require = {
 }
 extras_require['full'] = [pkg for sublist in list(extras_require.values()) for pkg in sublist]
 
+class InstallCommand(install):
+    def run(self):
+        setup = core.run_setup('neoscrypt_module/setup.py', stop_after='commandline')
+        setup.run_command('install')
+        install.run(self)
 
 setup(
     name="Electrum",
     version=version.ELECTRUM_VERSION,
     python_requires='>={}'.format(MIN_PYTHON_VERSION),
+    cmdclass={'build_py': BuildPyCommand, 'install': InstallCommand},
     install_requires=requirements,
     extras_require=extras_require,
     packages=[

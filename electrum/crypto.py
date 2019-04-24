@@ -27,6 +27,7 @@ import base64
 import os
 import hashlib
 import hmac
+import neoscrypt
 from typing import Union
 
 import pyaes
@@ -206,6 +207,10 @@ def hash_160(x: bytes) -> bytes:
         from . import ripemd
         md = ripemd.new(sha256(x))
         return md.digest()
+
+def PoWNeoScryptHash(x):
+    x = to_bytes(x, 'utf8')
+    return neoscrypt.getPoWHash(x)
 
 
 def hmac_oneshot(key: bytes, msg: bytes, digest) -> bytes:

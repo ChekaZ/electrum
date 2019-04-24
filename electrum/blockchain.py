@@ -27,6 +27,8 @@ from typing import Optional, Dict, Mapping, Sequence
 from . import util
 from .bitcoin import hash_encode, int_to_hex, rev_hex
 from .crypto import sha256d
+from .crypto import PoWNeoScryptHash
+from hashlib import blake2s
 from . import constants
 from .util import bfh, bh2u
 from .simple_config import SimpleConfig
@@ -34,6 +36,7 @@ from .simple_config import SimpleConfig
 
 HEADER_SIZE = 80  # bytes
 MAX_TARGET = 0x00000000FFFF0000000000000000000000000000000000000000000000000000
+MAX_TARGET_NEOSCRYPT = 0x0000003FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
 
 
 class MissingHeader(Exception):
@@ -67,6 +70,39 @@ def deserialize_header(s: bytes, height: int) -> dict:
     h['block_height'] = height
     return h
 
+def blake2s_gen(s):
+        version = data[0:1]
+        keyOne = data[36:46]
+        keyTwo = data[58:68]
+        ntime = data[68:72]
+        _nBits = data[72:76]
+        _nonce = data[76:80]
+        _full_merkle = data[36:68]
+        _input112 = data + _full_merkle
+        _key = keyTwo + ntime + _nBits + _nonce + keyOne
+        '''Prepare 112Byte Header '''
+        blake2s_hash = blake2s(key=_key, digest_size=32)
+        blake2s_hash.update(_input112)
+        '''TrezarFlips - Only for Genesis'''
+        return ''.join(map(str.__add__, blake2s_hash.hexdigest()[-2::-2],
+                           blake2s_hash.hexdigest()[-1::-2]))
+
+def blake2s(s):
+        version = data[0:1]
+        keyOne = data[36:46]
+        keyTwo = data[58:68]
+        ntime = data[68:72]
+        _nBits = data[72:76]
+        _nonce = data[76:80]
+        _full_merkle = data[36:68]
+        _input112 = data + _full_merkle
+        _key = keyTwo + ntime + _nBits + _nonce + keyOne
+        '''Prepare 112Byte Header '''
+        blake2s_hash = blake2s(key=_key, digest_size=32)
+        blake2s_hash.update(_input112)
+        '''TrezarFlips'''
+        return blake2s_hash.digest()
+
 def hash_header(header: dict) -> str:
     if header is None:
         return '0' * 64
@@ -76,7 +112,7 @@ def hash_header(header: dict) -> str:
 
 
 def hash_raw_header(header: str) -> str:
-    return hash_encode(sha256d(bfh(header)))
+    return hash_encode(blake2s(bfh(header)))
 
 
 # key: blockhash hex at forkpoint
@@ -296,7 +332,7 @@ class Blockchain(util.PrintError):
         num = len(data) // HEADER_SIZE
         start_height = index * 2016
         prev_hash = self.get_hash(start_height - 1)
-        target = self.get_target(index-1)
+        headers = []
         for i in range(num):
             height = start_height + i
             try:
@@ -304,7 +340,9 @@ class Blockchain(util.PrintError):
             except MissingHeader:
                 expected_header_hash = None
             raw_header = data[i*HEADER_SIZE : (i+1)*HEADER_SIZE]
-            header = deserialize_header(raw_header, index*2016 + i)
+            headers.append(deserialize_header(raw_header, index*2016 + i))
+        for i, header in enumerate(headers):
+            target = self.get_target(index*2016 + i, headers)
             self.verify_header(header, prev_hash, target, expected_header_hash)
             prev_hash = hash_header(header)
 
@@ -489,18 +527,24 @@ class Blockchain(util.PrintError):
         # compute target from chunk x, used in chunk x+1
         if constants.net.TESTNET:
             return 0
-        if index == -1:
+        if height == 0:
             return MAX_TARGET
-        if index < len(self.checkpoints):
-            h, t = self.checkpoints[index]
+        if height < len(self.checkpoints):
+            h, t = self.checkpoints[height]
             return t
         # new target
-        first = self.read_header(index * 2016)
-        last = self.read_header(index * 2016 + 2015)
-        if not first or not last:
+        interval = 2016
+        last = self.get_header(height - 1, height, headers)
+        if not last:
             raise MissingHeader()
         bits = last.get('bits')
         target = self.bits_to_target(bits)
+        if height % interval != 0:
+            return target
+        first = self.get_header(height - interval, height, headers)
+        if not first:
+            raise MissingHeader()
+        # new target
         nActualTimespan = last.get('timestamp') - first.get('timestamp')
         nTargetTimespan = 14 * 24 * 60 * 60
         nActualTimespan = max(nActualTimespan, nTargetTimespan // 4)
@@ -509,6 +553,12 @@ class Blockchain(util.PrintError):
         # not any target can be represented in 32 bits:
         new_target = self.bits_to_target(self.target_to_bits(new_target))
         return new_target
+
+    def get_header(self, height, ref_height, headers):
+        delta = ref_height % 2016
+        if height < ref_height - delta or headers is None:
+            return self.read_header(height)
+        return headers[delta - (ref_height - height)]
 
     @classmethod
     def bits_to_target(cls, bits: int) -> int:
@@ -533,8 +583,7 @@ class Blockchain(util.PrintError):
 
     def chainwork_of_header_at_height(self, height: int) -> int:
         """work done by single header at given height"""
-        chunk_idx = height // 2016 - 1
-        target = self.get_target(chunk_idx)
+        target = self.get_target(, None)
         work = ((2 ** 256 - target - 1) // (target + 1)) + 1
         return work
 
@@ -573,7 +622,7 @@ class Blockchain(util.PrintError):
             #self.print_error("cannot connect at height", height)
             return False
         if height == 0:
-            return hash_header(header) == constants.net.GENESIS
+            return blake2s_gen(header) == constants.net.GENESIS
         try:
             prev_hash = self.get_hash(height - 1)
         except:

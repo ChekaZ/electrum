@@ -40,9 +40,9 @@ if TYPE_CHECKING:
 
 ################################## transactions
 
-COINBASE_MATURITY = 100
-COIN = 100000000
-TOTAL_COIN_SUPPLY_LIMIT_IN_BTC = 21000000
+COINBASE_MATURITY = 200
+COIN = 1000000
+TOTAL_COIN_SUPPLY_LIMIT_IN_BTC = 400000000
 
 # supported types of transaction outputs
 TYPE_ADDRESS = 0
@@ -565,7 +565,9 @@ def deserialize_privkey(key: str) -> Tuple[str, bytes, bool]:
         # keys exported in version 3.0.x encoded script type in first byte
         prefix_value = vch[0] - constants.net.WIF_PREFIX
         try:
-            txin_type = WIF_SCRIPT_TYPES_INV[prefix_value]
+            backwards_comp = {v - 0x0E: k for k, v in WIF_SCRIPT_TYPES.items()}
+            backwards_comp.update(WIF_SCRIPT_TYPES_INV)
+            txin_type = backwards_comp[prefix_value]
         except KeyError:
             raise BitcoinException('invalid prefix ({}) for WIF key (1)'.format(vch[0]))
     else:
